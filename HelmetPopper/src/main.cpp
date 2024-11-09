@@ -108,7 +108,7 @@ void HitHead(std::monostate, Actor* a)
 
 			// 파암을 입고 있나 확인
 			bool isPA = false;
-			if (p->race == racePA) {
+			if (a->race == racePA) {
 				isPA = true;
 			}
 						
