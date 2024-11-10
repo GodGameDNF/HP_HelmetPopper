@@ -1,0 +1,131 @@
+{
+  "modName": "HP_HelmetPopper",
+  "displayName": "Helmet Popper",
+  "minMcmVersion": 1,
+  "pluginRequirements": ["HP_HelmetPopper.esp"],
+  "content": [
+    {
+      "text": "Headshots will remove and throw off headgear. For sniper rifles, headgear is always thrown off on a headshot kill.",
+      "type": "text"
+    },
+    {
+      "type": "spacer"
+    },
+    {
+      "text" : "Regular Enemy Chance",
+      "type": "section"
+    },
+        {
+          "text": "Bolt-Action Sniper",
+          "type": "slider",
+          "help": "Chance for a regular enemy to have their headgear removed upon a headshot from a bolt-action sniper rifle.",
+          "valueOptions": {
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "sourceType": "GlobalValue",
+            "sourceForm": "HP_HelmetPopper.esp|812"}
+          },
+        {
+          "text": "Semiautomatic Sniper",
+          "type": "slider",
+          "help": "Chance for a regular enemy to have their headgear removed upon a headshot from a semiautomatic sniper.",
+          "valueOptions": {
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "sourceType": "GlobalValue",
+            "sourceForm": "HP_HelmetPopper.esp|813"}
+          },
+        {
+          "text": "Non-Sniper Firearms",
+          "type": "slider",
+          "help": "Chance for a regular enemy to have their headgear removed upon a headshot from a non-sniper firearm.",
+          "valueOptions": {
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "sourceType": "GlobalValue",
+            "sourceForm": "HP_HelmetPopper.esp|814"}
+          },
+    {
+      "text" : "Power Armor Enemy Chance",
+      "type": "section"
+    },
+        {
+          "text": "Bolt-Action Sniper",
+          "type": "slider",
+          "help": "Chance for a Power Armor to have their headgear removed upon a headshot from a bolt-action sniper rifle.",
+          "valueOptions": {
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "sourceType": "GlobalValue",
+            "sourceForm": "HP_HelmetPopper.esp|815"}
+          },
+        {
+          "text": "Semiautomatic Sniper",
+          "type": "slider",
+          "help": "Chance for a Power Armor to have their headgear removed upon a headshot from a semiautomatic sniper rifle.",
+          "valueOptions": {
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "sourceType": "GlobalValue",
+            "sourceForm": "HP_HelmetPopper.esp|816"}
+          },
+        {
+          "text": "Non-Sniper Firearms",
+          "type": "slider",
+          "help": "Chance for a Power Armor to have their headgear removed upon a headshot from a non-sniper firearm.",
+          "valueOptions": {
+            "min": 0,
+            "max": 100,
+            "step": 5,
+            "sourceType": "GlobalValue",
+            "sourceForm": "HP_HelmetPopper.esp|817"}
+          },
+    {
+      "text" : "Helmet Throwing Adjustment",
+      "type": "section"
+    },
+        {
+          "text": "Throwing Force",
+          "type": "slider",
+          "help": "Speed at which the headgear is removed and thrown off, with a ±10% random variation.",
+          "valueOptions": {
+            "min": 260,
+            "max": 600,
+            "step": 20,
+            "sourceType": "GlobalValue",
+            "sourceForm": "HP_HelmetPopper.esp|818"}
+          },
+        {
+          "text": "Throwing Angle",
+          "type": "slider",
+          "help": "Angle at which the headgear is removed and thrown off, with a ±8° random variation.",
+          "valueOptions": {
+            "min": 40,
+            "max": 70,
+            "step": 5,
+            "sourceType": "GlobalValue",
+            "sourceForm": "HP_HelmetPopper.esp|81B"}
+          },
+        {
+          "text": "Weapon-specific Throwing Force Activation",
+          "type": "switcher",
+          "help": "The throwing force increases progressively from Non-Sniper Firearms to standard sniper rifles, and further to bolt-action rifles.",
+          "valueOptions": {
+            "sourceType": "GlobalValue",
+            "sourceForm": "HP_HelmetPopper.esp|81A"}
+          },
+        {
+          "text": "Headgear Removal Without Physics",
+          "type": "switcher",
+          "help": "If the headgear has no physics in the nif file, it will only be removed. When turned off, headgear without physics will not be removed.",
+          "valueOptions": {
+            "sourceType": "GlobalValue",
+            "sourceForm": "HP_HelmetPopper.esp|81C"}
+          }
+  ]
+}
