@@ -32,6 +32,8 @@ TESGlobal* Power_PopHeadGear_Weapon = nullptr;
 TESGlobal* Angle_PopHeadGear = nullptr;
 TESGlobal* Pop_NonCollision = nullptr;
 
+bool isRunning = false;
+
 namespace temp
 {
 	struct RefrOrInventoryObj
@@ -76,13 +78,23 @@ float GetRandomfloat(float a, float b)
 
 void HitHead(std::monostate, Actor* a)
 {
-	//logger::info("헤드");
-	if (!a)
+	if (isRunning) {
 		return;
+	}
+
+	isRunning = true;
+
+	//logger::info("헤드");
+	if (!a) {
+		isRunning = false;
+		return;
+	}
 
 	BSTSmartPointer<BipedAnim> tempanims = a->biped;
-	if (!tempanims)
+	if (!tempanims) {
+		isRunning = false;
 		return;
+	}
 
 	WeaponType weaponType = WeaponType::NonSniper; // 일단 무기의 기본값을 NonSniper로 설정
 
@@ -90,18 +102,23 @@ void HitHead(std::monostate, Actor* a)
 		//logger::info("안죽었어");
 		if (!a->GetHostileToActor(p)) {
 			//logger::info("아직 적대적인 적이 아님");
+			isRunning = false;
 			return;
 		}
 
 		BSTArray<EquippedItem>* equipped = &p->currentProcess->middleHigh->equippedItems;
-		if (!equipped)
+		if (!equipped) {
+			isRunning = false;
 			return;
+		}
 
 		if (equipped->size() != 0 && (*equipped)[0].item.instanceData) {
 			TESObjectWEAP* weap = (TESObjectWEAP*)(*equipped)[0].item.object;
 
-			if (!weap)
+			if (!weap) {
+				isRunning = false;
 				return;
+			}
 
 			//ㅡㅡㅡㅡㅡㅡㅡㅡㅡ 벗질지 말지 확률 계산 ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
 			float fRemovalChance = 0;
@@ -161,6 +178,7 @@ void HitHead(std::monostate, Actor* a)
 			}
 
 			if (GetRandomfloat(0, 100) > fRemovalChance) {
+				isRunning = false;
 				return; // 확률 계산에 실패했으므로 리턴함
 			}
 		}
@@ -178,18 +196,18 @@ void HitHead(std::monostate, Actor* a)
 			}
 
 			if (((form->formFlags >> 2) & 1) == 1) {
-				return; // 갑옷 플래그가 Non-Playable 임
+				continue;  // 갑옷 플래그가 Non-Playable 임
 			}
 
 			const char* ModelPath = GetModel(form);
 			if (!ModelPath || ModelPath[0] == '\0') {
 				//logger::info("모델 경로 못구함");
-				return;
+				continue;
 			}
 
 			NiAVObject* head = a->currentProcess->middleHigh->headNode;
 			if (!head) {
-				return; // 머리가 없어서 연산이 불가능
+				continue;  // 머리가 없어서 연산이 불가능
 			}
 
 			TESModel* cModel = (TESModel*)cProj;
@@ -252,8 +270,10 @@ void HitHead(std::monostate, Actor* a)
 			ObjectRefHandle tempproj = DH->CreateProjectileAtLocation(cProj, headPoint, shotAngle, a->parentCell, a->parentCell->worldSpace);
 
 			TESObjectREFR* fakeHelmRef = tempproj.get().get();
-			if (!fakeHelmRef)
+			if (!fakeHelmRef) {
+				isRunning = false;
 				return;
+			}
 
 			fakeHelmRef->Load3D(false); // 콜리전 적용여부를 확인하기 위해 동기 방식으로 3D 모델을 로드시킴
 			NiAVObject* tempMesh = tempproj.get().get()->Get3D();
@@ -262,14 +282,18 @@ void HitHead(std::monostate, Actor* a)
 				if (!(tempMesh->collisionObject)) {
 					fakeHelmRef->Disable();
 					if (Pop_NonCollision->value == 0) {
+						isRunning = false;
 						return;
 					}
 				}
 			}
 
 			a->UnequipArmorFromSlot((BIPED_OBJECT)i, true);
+			break;
 		}
 	}
+
+	isRunning = false;
 }
 
 void injectHeadEnchant(std::monostate)
