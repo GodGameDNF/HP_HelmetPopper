@@ -1,9 +1,9 @@
+#include <cmath>
 #include <string>
 #include <vector>
-#include <cmath>
 
 #ifndef M_PI
-#define M_PI 3.14159265358979323846
+#	define M_PI 3.14159265358979323846
 #endif
 
 using namespace RE;
@@ -31,6 +31,11 @@ TESGlobal* Power_PopHeadGear = nullptr;
 TESGlobal* Power_PopHeadGear_Weapon = nullptr;
 TESGlobal* Angle_PopHeadGear = nullptr;
 TESGlobal* Pop_NonCollision = nullptr;
+TESGlobal* Pop_Force_NonSniper = nullptr;
+
+UI* ui = nullptr;
+std::vector<ObjectRefHandle> helmetHandles;
+const size_t MAX_HELMET_HANDLES = 20;
 
 bool isRunning = false;
 
@@ -96,7 +101,7 @@ void HitHead(std::monostate, Actor* a)
 		return;
 	}
 
-	WeaponType weaponType = WeaponType::NonSniper; // 일단 무기의 기본값을 NonSniper로 설정
+	WeaponType weaponType = WeaponType::NonSniper;  // 일단 무기의 기본값을 NonSniper로 설정
 
 	if (!a->IsDead(true)) {
 		//logger::info("안죽었어");
@@ -128,7 +133,7 @@ void HitHead(std::monostate, Actor* a)
 			if (a->race == racePA) {
 				isPA = true;
 			}
-						
+
 			if (HasKeywordVM(vm, 0, weap, WeaponTypeSniper)) {
 				float vSpeed = weap->weaponData.rangedData->boltChargeSeconds;
 				bool isBolt = vSpeed > 0.5;
@@ -136,7 +141,7 @@ void HitHead(std::monostate, Actor* a)
 				if (isBolt) {
 					weaponType = WeaponType::BoltAction;  // 볼트액션일 경우
 				} else {
-					weaponType = WeaponType::Sniper; // 볼트액션이 아니면 일반 저격총
+					weaponType = WeaponType::Sniper;  // 볼트액션이 아니면 일반 저격총
 				}
 			}
 
@@ -179,19 +184,19 @@ void HitHead(std::monostate, Actor* a)
 
 			if (GetRandomfloat(0, 100) > fRemovalChance) {
 				isRunning = false;
-				return; // 확률 계산에 실패했으므로 리턴함
+				return;  // 확률 계산에 실패했으므로 리턴함
 			}
 		}
 	}
 
-	TESForm* armorForm = tempanims->object[3].parent.object; // 33번 바디 슬롯의 장비를 구함
+	TESForm* armorForm = tempanims->object[3].parent.object;  // 33번 바디 슬롯의 장비를 구함
 
-	for (int i = 0; i <= 16; i += 16) { // 30번이나 46번, 머리나 해드밴드 슬롯
+	for (int i = 0; i <= 16; i += 16) {  // 30번이나 46번, 머리나 해드밴드 슬롯
 		TESForm* form = tempanims->object[i].parent.object;
 		if (form) {
 			if (armorForm) {
 				if (armorForm == form) {
-					continue; // 머리장비지만 몸 슬롯도 차지하면 무시함
+					continue;  // 머리장비지만 몸 슬롯도 차지하면 무시함
 				}
 			}
 
@@ -211,7 +216,7 @@ void HitHead(std::monostate, Actor* a)
 			}
 
 			TESModel* cModel = (TESModel*)cProj;
-			cModel->model = ModelPath; // 방어구의 모델 경로를 복사해 esp내의 더미 지뢰에 넣음
+			cModel->model = ModelPath;  // 방어구의 모델 경로를 복사해 esp내의 더미 지뢰에 넣음
 
 			//튕겨나가는 속도 글로벌 가져오기
 			float popPower = Power_PopHeadGear->value;
@@ -269,13 +274,19 @@ void HitHead(std::monostate, Actor* a)
 			NiPoint3 shotAngle(angleInZAxis, 0, angleInRadians);
 			ObjectRefHandle tempproj = DH->CreateProjectileAtLocation(cProj, headPoint, shotAngle, a->parentCell, a->parentCell->worldSpace);
 
+			helmetHandles.push_back(tempproj);  // VATS 타겟이 되서 그냥 VATS켜면 없애버리게 하려고 배열에 저장
+
+			if (helmetHandles.size() > MAX_HELMET_HANDLES) {  // 핸들이 너무 쌓일까봐 20개까지 저장하고 앞을 삭제
+				helmetHandles.erase(helmetHandles.begin());
+			}
+
 			TESObjectREFR* fakeHelmRef = tempproj.get().get();
 			if (!fakeHelmRef) {
 				isRunning = false;
 				return;
 			}
 
-			fakeHelmRef->Load3D(false); // 콜리전 적용여부를 확인하기 위해 동기 방식으로 3D 모델을 로드시킴
+			fakeHelmRef->Load3D(false);  // 콜리전 적용여부를 확인하기 위해 동기 방식으로 3D 모델을 로드시킴
 			NiAVObject* tempMesh = tempproj.get().get()->Get3D();
 
 			if (tempMesh) {
@@ -306,10 +317,10 @@ void injectHeadEnchant(std::monostate)
 		TESObjectWEAP* weapon = (TESObjectWEAP*)(*equipped)[0].item.object;
 
 		if (!weapon || weapon->weaponData.ammo == nullptr)
-			return; // 무기가 없거나 투사 무기가 아니면 리턴
+			return;  // 무기가 없거나 투사 무기가 아니면 리턴
 
 		// 장착중인 무기에서 인스턴트 데이터 가져오는 코드
-		TESObjectWEAP::InstanceData* instData = (TESObjectWEAP::InstanceData*)((*equipped)[0].item.instanceData).get();	
+		TESObjectWEAP::InstanceData* instData = (TESObjectWEAP::InstanceData*)((*equipped)[0].item.instanceData).get();
 
 		if (!instData)
 			return;
@@ -330,8 +341,36 @@ void injectHeadEnchant(std::monostate)
 		}
 		// enchantments에 추가
 		enchantments->push_back(hopperENCH);
-
 	}
+}
+
+class ContainerMenuHandler : public BSTEventSink<MenuOpenCloseEvent>
+{
+public:
+	virtual BSEventNotifyControl ProcessEvent(const MenuOpenCloseEvent& evn, BSTEventSource<MenuOpenCloseEvent>* src) override
+	{
+		if (evn.menuName == "VATSMenu") {
+			if (evn.opening) {
+				for (ObjectRefHandle& handle : helmetHandles) {
+					auto perRef = handle.get();
+					if (perRef) {
+						TESObjectREFR* ref = perRef.get();
+						if (ref) {
+							ref->Disable();
+						}
+					}
+				}
+				helmetHandles.clear();
+			}
+		}
+		return RE::BSEventNotifyControl::kContinue;
+	}
+};
+
+void RegisterEvent()
+{
+	ContainerMenuHandler* menuHandle = new ContainerMenuHandler();
+	ui->GetSingleton()->GetEventSource<MenuOpenCloseEvent>()->RegisterSink(menuHandle);
 }
 
 void OnF4SEMessage(F4SE::MessagingInterface::Message* msg)
@@ -358,6 +397,9 @@ void OnF4SEMessage(F4SE::MessagingInterface::Message* msg)
 		Power_PopHeadGear_Weapon = (TESGlobal*)DH->LookupForm(0x81a, "HP_HelmetPopper.esp");
 		Angle_PopHeadGear = (TESGlobal*)DH->LookupForm(0x81b, "HP_HelmetPopper.esp");
 		Pop_NonCollision = (TESGlobal*)DH->LookupForm(0x81c, "HP_HelmetPopper.esp");
+		Pop_Force_NonSniper = (TESGlobal*)DH->LookupForm(0x81f, "HP_HelmetPopper.esp");
+
+		RegisterEvent();
 
 		break;
 	case F4SE::MessagingInterface::kPostLoadGame:
