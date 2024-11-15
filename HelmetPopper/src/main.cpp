@@ -1,6 +1,17 @@
 #include <cmath>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <chrono>
+#include <ctime>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 #include <string>
+#include <sys/stat.h>
 #include <vector>
+#include <windows.h>
 
 #ifndef M_PI
 #	define M_PI 3.14159265358979323846
@@ -37,6 +48,10 @@ UI* ui = nullptr;
 std::vector<ObjectRefHandle> helmetHandles;
 const size_t MAX_HELMET_HANDLES = 20;
 
+std::string lootDir;
+std::vector<TESForm*> skipList;
+TESObjectREFR* filterBox = nullptr;
+
 bool isRunning = false;
 
 namespace temp
@@ -50,12 +65,32 @@ namespace temp
 
 }
 
+struct FormOrInventoryObj
+{
+	TESForm* form{ nullptr };  // TESForm 포인터를 가리키는 포인터
+	uint64_t second_arg{ 0 };  // unsigned 64비트 정수
+};
+
 enum class WeaponType
 {
 	NonSniper,
 	Sniper,
 	BoltAction
 };
+
+bool AddItemVM(BSScript::IVirtualMachine* vm, uint32_t i, TESObjectREFR* target, FormOrInventoryObj obj, uint32_t count, bool b1)
+{
+	using func_t = decltype(&AddItemVM);
+	REL::Relocation<func_t> func{ REL::ID(1212351) };
+	return func(vm, i, target, obj, count, b1);
+}
+
+bool RemoveItemVM(BSScript::IVirtualMachine* vm, uint32_t i, TESObjectREFR* target, FormOrInventoryObj obj, uint32_t count, bool b1, TESObjectREFR* sender)
+{
+	using func_t = decltype(&RemoveItemVM);
+	REL::Relocation<func_t> func{ REL::ID(492460) };
+	return func(vm, i, target, obj, count, b1, sender);
+}
 
 bool HasKeywordVM(BSScript::IVirtualMachine* vm, uint32_t i, TESForm* target, BGSKeyword* k)
 {
@@ -80,6 +115,218 @@ float GetRandomfloat(float a, float b)
 
 	return randNum;
 }
+
+TESForm* getFormformFile(std::string tempLine)
+{
+	TESForm* form = nullptr;
+
+	const int MIN_FORM_ID = 0;
+	const int MAX_FORM_ID = 0xFFFFFF;  // 예시 범위
+	size_t pos = tempLine.find("**");
+	if (pos == std::string::npos) {
+		return form;  // 문자열에 **가 없음
+	}
+
+	std::istringstream iss(tempLine);
+
+	std::string espName = tempLine.substr(0, pos);  // ** 이전 부분
+	std::string stringFormID = tempLine.substr(pos + 2);
+	int formID;
+	std::istringstream(stringFormID) >> std::hex >> formID;
+
+	if (formID < MIN_FORM_ID || formID > MAX_FORM_ID) {
+		return form;  // 받아온 값이 이상함
+	}
+
+	form = DH->LookupForm(formID, espName);
+
+	return form;
+}
+
+void FillContainerfromFile(std::monostate)  // 필터 가구를 열때 txt 목록 아이템을 상자에 넣음
+{
+	std::string skipName = "skipFilter.txt";
+	std::string skipPath = lootDir + skipName;
+	std::ifstream SkipFile(skipPath);  // 필터가 저장된 txt 파일을 불러옴
+	if (!SkipFile) {
+		return;  // 파일을 열지 못한 경우
+	}
+
+	//logger::info("파일 경로: {}", skipPath);
+
+	std::string tempLine02;
+	while (std::getline(SkipFile, tempLine02)) {
+		if (tempLine02.empty()) {
+			continue;
+		}
+
+		TESForm* form = getFormformFile(tempLine02);
+		if (form) {
+			FormOrInventoryObj tempObj;
+			tempObj.form = form;
+			AddItemVM(vm, 0, filterBox, tempObj, 1, true);
+		}
+	}
+
+	SkipFile.close();
+
+	return;
+}
+
+bool loadFilterSettingsFromFiles()  // esp에 적은 필터와 txt 필터를 배열에 삽입
+{
+	skipList.clear();
+
+	std::string skipName = "skipFilter.txt";
+	std::string skipPath = lootDir + skipName;
+	std::ifstream SkipFile(skipPath); // 필터가 저장된 txt 파일을 불러옴
+	if (!SkipFile) {
+		return false;  // 파일을 열지 못한 경우
+	}
+
+	std::string tempName = "t1t1t11.txt";
+	std::string tempPath = lootDir + tempName;
+	std::ofstream TempFile(tempPath);  // 임시 파일 생성
+
+	std::string tempLine02;
+	while (std::getline(SkipFile, tempLine02)) {
+		if (tempLine02.empty()) {
+			continue;
+		}
+
+		TESForm* form = getFormformFile(tempLine02);
+
+		if (form) {
+			stl::enumeration<ENUM_FORM_ID, std::uint8_t> type = form->formType;
+			if (type == ENUM_FORM_ID::kARMO) {
+				TESObjectARMO* armor = (TESObjectARMO*)form;
+				if (armor) {
+					auto bipedFlag = armor->bipedModelData.bipedObjectSlots;
+					if ((bipedFlag & (1 << 0)) != 0 || (bipedFlag & (1 << 16)) != 0) {
+						skipList.push_back(form);
+						TempFile << tempLine02 << '\n';  // 조건에 맞는 경우에만 기록
+					}
+				}
+			}
+		}
+	}
+
+	SkipFile.close();
+	TempFile.close();
+
+	// 원래 파일을 새 파일로 덮어쓰기
+	std::remove(skipPath.c_str());
+	std::rename(tempPath.c_str(), skipPath.c_str());
+
+	return true;
+}
+
+void setSkipFilter(std::monostate)  // 루팅 필터 가구를 닫을때 실행됨
+{
+	BGSInventoryList* temp = filterBox->inventoryList;  // 필터 상자의 인벤토리 리스트 가져오기
+	if (!temp) {
+		return;
+	}
+
+	std::string fileName = "skipFilter.txt";            // 저장할 파일 이름 설정
+	std::string filePath = lootDir + fileName;          // 파일 경로 설정
+	std::ofstream fileStream(filePath, std::ios::out);  // 파일을 쓰기 모드로 열기
+
+	if (!fileStream.is_open()) {
+		//logger::error("파일을 열지 못했습니다.");
+		return;  // 파일을 열지 못한 경우 종료
+	}
+	//logger::info("파일을 성공적으로 열었습니다: {}", filePath);
+
+
+	std::vector<TESObjectREFR::RemoveItemData*> itemsToRemove;  // 제거할 아이템 목록 저장용 벡터
+
+	// 상자 내의 아이템에서 아이템 분류하고 메모장에 적기
+	BSTArray<BGSInventoryItem> boxList = temp->data;
+	if (!boxList.empty()) {
+		for (BGSInventoryItem bItem : boxList) {
+			TESBoundObject* obj = bItem.object;
+
+			TESObjectARMO* armor = (TESObjectARMO*)obj;
+			if (!armor) {
+				//logger::info("null 체크에 걸림");
+				continue;  // nullptr 체크
+			}
+
+						
+
+			if (obj->formType != ENUM_FORM_ID::kARMO) {
+
+			}
+
+			stl::enumeration<ENUM_FORM_ID, std::uint8_t> type = obj->formType;
+			auto bipedFlag = armor->bipedModelData.bipedObjectSlots;
+
+			if ((obj->formType != ENUM_FORM_ID::kARMO) || (bipedFlag & (1 << 0)) == 0 && (bipedFlag & (1 << 16)) == 0) {
+				TESBoundObject* obj = bItem.object;
+				uint32_t iCount = bItem.GetCount();
+
+				FormOrInventoryObj tempObj;
+				tempObj.form = obj;
+				RemoveItemVM(vm, 0, filterBox, tempObj, iCount, true, p);
+
+				continue;  // 상자에 들은 아이템이 방어구가 아니거나 30 46 플래그 없으면 아이템을 반환하고 다음으로
+			}
+
+			// 멤버함수 썼더니 최종수정 모드가 뽑혀서 배열로 원본 esp 검색
+			BSStaticArray<TESFile*> overwriteArray = obj->sourceFiles.array[0];
+			TESFile* espFile = overwriteArray[0];
+			bool bEsl = false;
+			if (espFile->IsLight()) {
+				bEsl = true;
+			}
+
+			std::string_view nameTemp = espFile->GetFilename();
+			std::string espName = std::string(nameTemp);
+
+			std::stringstream ss;
+			ss << std::hex << obj->formID;
+			std::string hexString = ss.str();
+
+			// esl 플래그 확인하고 폼id 저장
+			if (bEsl) {
+				if (hexString.size() < 3) {
+					hexString = std::string(3 - hexString.size(), '0') + hexString;
+				}
+				hexString = hexString.substr(hexString.size() - 3, 3);
+			} else {
+				if (hexString.size() < 6) {
+					hexString = std::string(6 - hexString.size(), '0') + hexString;
+				}
+				hexString = hexString.substr(hexString.size() - 6, 6);
+			}
+
+			std::string slash = "**";
+			std::string text = std::string(espName) + slash + hexString;
+			fileStream << text << std::endl;
+
+			TESObjectREFR::RemoveItemData* rData = new TESObjectREFR::RemoveItemData(obj, 1);
+			rData->reason = ITEM_REMOVE_REASON::kNone;
+			itemsToRemove.push_back(rData);
+		}
+	}
+
+	// 삭제시 배열 꼬임을 막기 위해 임시 배열에 저장하고 한번에 삭제
+	if (!itemsToRemove.empty()) {
+		for (TESObjectREFR::RemoveItemData* rData : itemsToRemove) {
+			ObjectRefHandle dropRef = filterBox->RemoveItem(*rData);
+			delete rData;  // 메모리 해제
+		}
+		itemsToRemove.clear();  // 벡터 초기화
+	}
+
+	fileStream.flush();  // 버퍼를 비워서 파일에 쓰기 작업을 완료합니다.
+	fileStream.close();  // 파일을 닫습니다.
+	//logger::info("파일을 성공적으로 닫았습니다: {}", filePath);
+
+	loadFilterSettingsFromFiles();  // 기본 필터와 txt 필터를 각 배열에 삽입
+}
+
 
 void HitHead(std::monostate, Actor* a)
 {
@@ -202,6 +449,18 @@ void HitHead(std::monostate, Actor* a)
 
 			if (((form->formFlags >> 2) & 1) == 1) {
 				continue;  // 갑옷 플래그가 Non-Playable 임
+			}
+
+			bool existForm = false;
+			for (TESForm* filterHelmet : skipList) {
+				if (filterHelmet == form) {
+					existForm = true; //  MCM에서 저장한 txt파일에 옮겨놓은 필터배열과 방어구를 비교
+					break; 
+				}
+			}
+
+			if (existForm) {
+				continue;  // 필터배열과 같은게 있으면 다음으로
 			}
 
 			const char* ModelPath = GetModel(form);
@@ -377,35 +636,51 @@ void OnF4SEMessage(F4SE::MessagingInterface::Message* msg)
 {
 	switch (msg->type) {
 	case F4SE::MessagingInterface::kGameLoaded:
-		DH = RE::TESDataHandler::GetSingleton();
-		p = PlayerCharacter::GetSingleton();
-		cProj = (BGSProjectile*)DH->LookupForm(0x800, "HP_HelmetPopper.esp");
-		hopperENCH = (EnchantmentItem*)DH->LookupForm(0x80F, "HP_HelmetPopper.esp");
-		WeaponTypeSniper = (BGSKeyword*)DH->LookupForm(0x01E325D, "Fallout4.esm");
-		helmetPA = (BGSKeyword*)DH->LookupForm(0x00182CD5, "Fallout4.esm");
-		racePA = (TESRace*)DH->LookupForm(0x0001D31E, "Fallout4.esm");
+		{
+			DH = RE::TESDataHandler::GetSingleton();
+			p = PlayerCharacter::GetSingleton();
+			cProj = (BGSProjectile*)DH->LookupForm(0x800, "HP_HelmetPopper.esp");
+			hopperENCH = (EnchantmentItem*)DH->LookupForm(0x80F, "HP_HelmetPopper.esp");
+			WeaponTypeSniper = (BGSKeyword*)DH->LookupForm(0x01E325D, "Fallout4.esm");
+			helmetPA = (BGSKeyword*)DH->LookupForm(0x00182CD5, "Fallout4.esm");
+			racePA = (TESRace*)DH->LookupForm(0x0001D31E, "Fallout4.esm");
 
-		Percent_Non_PA_BoltAction = (TESGlobal*)DH->LookupForm(0x812, "HP_HelmetPopper.esp");
-		Percent_Non_PA_Non_BoltAction = (TESGlobal*)DH->LookupForm(0x813, "HP_HelmetPopper.esp");
-		Percent_Non_PA_NonSniper = (TESGlobal*)DH->LookupForm(0x814, "HP_HelmetPopper.esp");
+			Percent_Non_PA_BoltAction = (TESGlobal*)DH->LookupForm(0x812, "HP_HelmetPopper.esp");
+			Percent_Non_PA_Non_BoltAction = (TESGlobal*)DH->LookupForm(0x813, "HP_HelmetPopper.esp");
+			Percent_Non_PA_NonSniper = (TESGlobal*)DH->LookupForm(0x814, "HP_HelmetPopper.esp");
 
-		Percent_PA_BoltAction = (TESGlobal*)DH->LookupForm(0x815, "HP_HelmetPopper.esp");
-		Percent_PA_Non_BoltAction = (TESGlobal*)DH->LookupForm(0x816, "HP_HelmetPopper.esp");
-		Percent_PA_NonSniper = (TESGlobal*)DH->LookupForm(0x817, "HP_HelmetPopper.esp");
+			Percent_PA_BoltAction = (TESGlobal*)DH->LookupForm(0x815, "HP_HelmetPopper.esp");
+			Percent_PA_Non_BoltAction = (TESGlobal*)DH->LookupForm(0x816, "HP_HelmetPopper.esp");
+			Percent_PA_NonSniper = (TESGlobal*)DH->LookupForm(0x817, "HP_HelmetPopper.esp");
 
-		Power_PopHeadGear = (TESGlobal*)DH->LookupForm(0x818, "HP_HelmetPopper.esp");
-		Power_PopHeadGear_Weapon = (TESGlobal*)DH->LookupForm(0x81a, "HP_HelmetPopper.esp");
-		Angle_PopHeadGear = (TESGlobal*)DH->LookupForm(0x81b, "HP_HelmetPopper.esp");
-		Pop_NonCollision = (TESGlobal*)DH->LookupForm(0x81c, "HP_HelmetPopper.esp");
-		Pop_Force_NonSniper = (TESGlobal*)DH->LookupForm(0x81f, "HP_HelmetPopper.esp");
+			Power_PopHeadGear = (TESGlobal*)DH->LookupForm(0x818, "HP_HelmetPopper.esp");
+			Power_PopHeadGear_Weapon = (TESGlobal*)DH->LookupForm(0x81a, "HP_HelmetPopper.esp");
+			Angle_PopHeadGear = (TESGlobal*)DH->LookupForm(0x81b, "HP_HelmetPopper.esp");
+			Pop_NonCollision = (TESGlobal*)DH->LookupForm(0x81c, "HP_HelmetPopper.esp");
+			Pop_Force_NonSniper = (TESGlobal*)DH->LookupForm(0x81f, "HP_HelmetPopper.esp");
 
-		RegisterEvent();
+			// 실행 파일 경로를 구한 후 targetDirectory에 직접 할당
+			char resultBuf[256];
+			uint32_t tInt = GetModuleFileNameA(GetModuleHandle(NULL), resultBuf, sizeof(resultBuf));
 
-		break;
+			lootDir = std::string(resultBuf, tInt);
+			lootDir = lootDir.substr(0, lootDir.find_last_of('\\')) + "\\Data\\F4SE\\Plugins\\_skipFilter\\";
+
+			loadFilterSettingsFromFiles();  // txt 파일에 적힌 필터들을 배열에 저장함
+
+			// 필터가구를 닫을때 쓸 변수들
+			filterBox = (TESObjectREFR*)DH->LookupForm(0x823, "HP_HelmetPopper.esp");
+
+			RegisterEvent();
+
+			break;
+		}
 	case F4SE::MessagingInterface::kPostLoadGame:
-		injectHeadEnchant(std::monostate{});
+		{
+			injectHeadEnchant(std::monostate{});
 
-		break;
+			break;
+		}
 	}
 }
 
@@ -414,6 +689,8 @@ bool RegisterPapyrusFunctions(RE::BSScript::IVirtualMachine* a_vm)
 	vm = a_vm;
 	a_vm->BindNativeMethod("HP_HelmetPopper"sv, "HitHead"sv, HitHead);
 	a_vm->BindNativeMethod("HP_HelmetPopper"sv, "injectHeadEnchant"sv, injectHeadEnchant);
+	a_vm->BindNativeMethod("HP_HelmetPopper"sv, "setSkipFilter"sv, setSkipFilter);
+	a_vm->BindNativeMethod("HP_HelmetPopper"sv, "FillContainerfromFile", FillContainerfromFile);
 
 	return true;
 }
