@@ -12,12 +12,37 @@
 #include <sys/stat.h>
 #include <vector>
 #include <windows.h>
+#include <filesystem>
 
 #ifndef M_PI
 #	define M_PI 3.14159265358979323846
 #endif
 
 using namespace RE;
+namespace fs = std::filesystem;
+
+namespace temp
+{
+	struct RefrOrInventoryObj
+	{
+		TESObjectREFR* refr;
+		TESObjectREFR* inv;
+		uint16_t id;
+	};
+}
+
+struct FormOrInventoryObj
+{
+	TESForm* form{ nullptr };  // TESForm 포인터를 가리키는 포인터
+	uint64_t second_arg{ 0 };  // unsigned 64비트 정수
+};
+
+enum class WeaponType
+{
+	NonSniper,
+	Sniper,
+	BoltAction
+};
 
 PlayerCharacter* p = nullptr;
 BSScript::IVirtualMachine* vm = nullptr;
@@ -41,7 +66,7 @@ TESGlobal* Percent_PA_NonSniper = nullptr;
 TESGlobal* Power_PopHeadGear = nullptr;
 TESGlobal* Power_PopHeadGear_Weapon = nullptr;
 TESGlobal* Angle_PopHeadGear = nullptr;
-TESGlobal* Pop_NonCollision = nullptr;
+//TESGlobal* Pop_NonCollision = nullptr;
 TESGlobal* Pop_Force_NonSniper = nullptr;
 
 UI* ui = nullptr;
@@ -52,31 +77,9 @@ std::string lootDir;
 std::vector<TESForm*> skipList;
 TESObjectREFR* filterBox = nullptr;
 
+WeaponType weaponType;
+
 bool isRunning = false;
-
-namespace temp
-{
-	struct RefrOrInventoryObj
-	{
-		TESObjectREFR* refr;
-		TESObjectREFR* inv;
-		uint16_t id;
-	};
-
-}
-
-struct FormOrInventoryObj
-{
-	TESForm* form{ nullptr };  // TESForm 포인터를 가리키는 포인터
-	uint64_t second_arg{ 0 };  // unsigned 64비트 정수
-};
-
-enum class WeaponType
-{
-	NonSniper,
-	Sniper,
-	BoltAction
-};
 
 bool AddItemVM(BSScript::IVirtualMachine* vm, uint32_t i, TESObjectREFR* target, FormOrInventoryObj obj, uint32_t count, bool b1)
 {
@@ -179,17 +182,21 @@ bool loadFilterSettingsFromFiles()  // esp에 적은 필터와 txt 필터를 배
 
 	std::string skipName = "skipFilter.txt";
 	std::string skipPath = lootDir + skipName;
-	std::ifstream SkipFile(skipPath); // 필터가 저장된 txt 파일을 불러옴
+	std::ifstream SkipFile(skipPath);  // 필터가 저장된 txt 파일을 불러옴
 	if (!SkipFile) {
 		return false;  // 파일을 열지 못한 경우
 	}
 
-	std::string tempName = "t1t1t11.txt";
-	std::string tempPath = lootDir + tempName;
-	std::ofstream TempFile(tempPath);  // 임시 파일 생성
+	std::string line;
+	std::vector<std::string> lines;
+	while (std::getline(SkipFile, line)) {
+		lines.push_back(line);  // 파일 내용 전체를 메모리에 저장
+	}
+	SkipFile.close();
 
-	std::string tempLine02;
-	while (std::getline(SkipFile, tempLine02)) {
+	// skipList에 필터 추가
+	std::vector<std::string> validLines;
+	for (const auto& tempLine02 : lines) {
 		if (tempLine02.empty()) {
 			continue;
 		}
@@ -204,28 +211,32 @@ bool loadFilterSettingsFromFiles()  // esp에 적은 필터와 txt 필터를 배
 					auto bipedFlag = armor->bipedModelData.bipedObjectSlots;
 					if ((bipedFlag & (1 << 0)) != 0 || (bipedFlag & (1 << 16)) != 0) {
 						skipList.push_back(form);
-						TempFile << tempLine02 << '\n';  // 조건에 맞는 경우에만 기록
+						validLines.push_back(tempLine02);  // 조건에 맞는 항목만 저장
 					}
 				}
 			}
 		}
 	}
 
-	SkipFile.close();
-	TempFile.close();
+	// 필터 조건에 맞는 항목들만 원본 파일에 덮어쓰기
+	std::ofstream SkipFileOut(skipPath);  // 파일을 다시 엽니다
+	if (!SkipFileOut) {
+		return false;
+	}
 
-	// 원래 파일을 새 파일로 덮어쓰기
-	std::remove(skipPath.c_str());
-	std::rename(tempPath.c_str(), skipPath.c_str());
+	for (const auto& validLine : validLines) {
+		SkipFileOut << validLine << '\n';  // 조건에 맞는 항목만 기록
+	}
 
+	SkipFileOut.close();
 	return true;
 }
 
-void setSkipFilter(std::monostate)  // 루팅 필터 가구를 닫을때 실행됨
+bool setSkipFilter(std::monostate)  // 루팅 필터 가구를 닫을때 실행됨
 {
 	BGSInventoryList* temp = filterBox->inventoryList;  // 필터 상자의 인벤토리 리스트 가져오기
 	if (!temp) {
-		return;
+		return false;
 	}
 
 	std::string fileName = "skipFilter.txt";            // 저장할 파일 이름 설정
@@ -234,7 +245,7 @@ void setSkipFilter(std::monostate)  // 루팅 필터 가구를 닫을때 실행�
 
 	if (!fileStream.is_open()) {
 		//logger::error("파일을 열지 못했습니다.");
-		return;  // 파일을 열지 못한 경우 종료
+		return false;  // 파일을 열지 못한 경우 종료
 	}
 	//logger::info("파일을 성공적으로 열었습니다: {}", filePath);
 
@@ -251,12 +262,6 @@ void setSkipFilter(std::monostate)  // 루팅 필터 가구를 닫을때 실행�
 			if (!armor) {
 				//logger::info("null 체크에 걸림");
 				continue;  // nullptr 체크
-			}
-
-						
-
-			if (obj->formType != ENUM_FORM_ID::kARMO) {
-
 			}
 
 			stl::enumeration<ENUM_FORM_ID, std::uint8_t> type = obj->formType;
@@ -324,7 +329,11 @@ void setSkipFilter(std::monostate)  // 루팅 필터 가구를 닫을때 실행�
 	fileStream.close();  // 파일을 닫습니다.
 	//logger::info("파일을 성공적으로 닫았습니다: {}", filePath);
 
-	loadFilterSettingsFromFiles();  // 기본 필터와 txt 필터를 각 배열에 삽입
+	if (loadFilterSettingsFromFiles()) {  // 기본 필터와 txt 필터를 각 배열에 삽입
+		return true;
+	}
+
+	return false;
 }
 
 
@@ -348,95 +357,68 @@ void HitHead(std::monostate, Actor* a)
 		return;
 	}
 
-	WeaponType weaponType = WeaponType::NonSniper;  // 일단 무기의 기본값을 NonSniper로 설정
-
-	if (!a->IsDead(true)) {
-		//logger::info("안죽었어");
+	if (!a->IsDead(true) || (weaponType == WeaponType::NonSniper && Pop_Force_NonSniper->value == 0)) {
+		//logger::info("안죽었거나 저격총이 아니고 mcm에서 옵션을 끔");
 		if (!a->GetHostileToActor(p)) {
 			//logger::info("아직 적대적인 적이 아님");
 			isRunning = false;
 			return;
 		}
 
-		BSTArray<EquippedItem>* equipped = &p->currentProcess->middleHigh->equippedItems;
-		if (!equipped) {
-			isRunning = false;
-			return;
+		//ㅡㅡㅡㅡㅡㅡㅡㅡㅡ 벗질지 말지 확률 계산 ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
+		float fRemovalChance = 0;
+
+		// 파암을 입고 있나 확인
+		bool isPA = false;
+		if (a->race == racePA) {
+			isPA = true;
 		}
 
-		if (equipped->size() != 0 && (*equipped)[0].item.instanceData) {
-			TESObjectWEAP* weap = (TESObjectWEAP*)(*equipped)[0].item.object;
-
-			if (!weap) {
-				isRunning = false;
-				return;
-			}
-
-			//ㅡㅡㅡㅡㅡㅡㅡㅡㅡ 벗질지 말지 확률 계산 ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ
-			float fRemovalChance = 0;
-
-			// 파암을 입고 있나 확인
-			bool isPA = false;
-			if (a->race == racePA) {
-				isPA = true;
-			}
-
-			if (HasKeywordVM(vm, 0, weap, WeaponTypeSniper)) {
-				float vSpeed = weap->weaponData.rangedData->boltChargeSeconds;
-				bool isBolt = vSpeed > 0.5;
-
-				if (isBolt) {
-					weaponType = WeaponType::BoltAction;  // 볼트액션일 경우
+		// 파워아머 종족인지 확인하고 각 무기 타입에 따른 확률 설정
+		switch (weaponType) {
+		case WeaponType::NonSniper:
+			{
+				if (isPA) {
+					fRemovalChance = Percent_PA_NonSniper->value;
 				} else {
-					weaponType = WeaponType::Sniper;  // 볼트액션이 아니면 일반 저격총
+					fRemovalChance = Percent_Non_PA_NonSniper->value;
 				}
+				break;
 			}
+		case WeaponType::Sniper:
+			{
+				if (isPA) {
+					fRemovalChance = Percent_PA_Non_BoltAction->value;
+				} else {
+					fRemovalChance = Percent_Non_PA_Non_BoltAction->value;
+				}
+				break;
+			}
+		case WeaponType::BoltAction:
+			{
+				if (isPA) {
+					fRemovalChance = Percent_PA_BoltAction->value;
+				} else {
+					fRemovalChance = Percent_Non_PA_BoltAction->value;
+				}
+				break;
+			}
+		}
 
-			// 파워아머 종족인지 확인하고 각 무기 타입에 따른 확률 설정
-			switch (weaponType) {
-			case WeaponType::NonSniper:
-				{
-					if (isPA) {
-						fRemovalChance = Percent_PA_NonSniper->value;
-					} else {
-						fRemovalChance = Percent_Non_PA_NonSniper->value;
-					}
-					break;
-				}
-			case WeaponType::Sniper:
-				{
-					if (isPA) {
-						fRemovalChance = Percent_PA_Non_BoltAction->value;
-					} else {
-						fRemovalChance = Percent_Non_PA_Non_BoltAction->value;
-					}
-					break;
-				}
-			case WeaponType::BoltAction:
-				{
-					if (isPA) {
-						fRemovalChance = Percent_PA_BoltAction->value;
-					} else {
-						fRemovalChance = Percent_Non_PA_BoltAction->value;
-					}
-					break;
-				}
-			}
+		if (fRemovalChance > 100) {
+			fRemovalChance = 100;
+		} else if (fRemovalChance < 0) {
+			fRemovalChance = 0;
+		}
 
-			if (fRemovalChance > 100) {
-				fRemovalChance = 100;
-			} else if (fRemovalChance < 0) {
-				fRemovalChance = 0;
-			}
-
-			if (GetRandomfloat(0, 100) > fRemovalChance) {
-				isRunning = false;
-				return;  // 확률 계산에 실패했으므로 리턴함
-			}
+		if (GetRandomfloat(0, 100) > fRemovalChance) {
+			isRunning = false;
+			return;  // 확률 계산에 실패했으므로 리턴함
 		}
 	}
 
 	TESForm* armorForm = tempanims->object[3].parent.object;  // 33번 바디 슬롯의 장비를 구함
+	TESForm* armorForm02 = tempanims->object[6].parent.object;  // 36번 바디 슬롯의 장비를 구함
 
 	for (int i = 0; i <= 16; i += 16) {  // 30번이나 46번, 머리나 해드밴드 슬롯
 		TESForm* form = tempanims->object[i].parent.object;
@@ -444,6 +426,12 @@ void HitHead(std::monostate, Actor* a)
 			if (armorForm) {
 				if (armorForm == form) {
 					continue;  // 머리장비지만 몸 슬롯도 차지하면 무시함
+				}
+			}
+
+			if (armorForm02) {
+				if (armorForm02 == form) {
+					continue;  // 머리장비지만 상체갑옷 슬롯도 차지하면 무시함
 				}
 			}
 
@@ -539,25 +527,6 @@ void HitHead(std::monostate, Actor* a)
 				helmetHandles.erase(helmetHandles.begin());
 			}
 
-			TESObjectREFR* fakeHelmRef = tempproj.get().get();
-			if (!fakeHelmRef) {
-				isRunning = false;
-				return;
-			}
-
-			fakeHelmRef->Load3D(false);  // 콜리전 적용여부를 확인하기 위해 동기 방식으로 3D 모델을 로드시킴
-			NiAVObject* tempMesh = tempproj.get().get()->Get3D();
-
-			if (tempMesh) {
-				if (!(tempMesh->collisionObject)) {
-					fakeHelmRef->Disable();
-					if (Pop_NonCollision->value == 0) {
-						isRunning = false;
-						return;
-					}
-				}
-			}
-
 			a->UnequipArmorFromSlot((BIPED_OBJECT)i, true);
 			break;
 		}
@@ -581,8 +550,38 @@ void injectHeadEnchant(std::monostate)
 		// 장착중인 무기에서 인스턴트 데이터 가져오는 코드
 		TESObjectWEAP::InstanceData* instData = (TESObjectWEAP::InstanceData*)((*equipped)[0].item.instanceData).get();
 
-		if (!instData)
+		if (!instData) {
 			return;
+		}
+
+		// 장착한 무기의 타입을 저장함
+		weaponType = WeaponType::NonSniper;
+
+		BSTArray<EquippedItem>* equipped = &p->currentProcess->middleHigh->equippedItems;
+		if (!equipped) {
+			isRunning = false;
+			return;
+		}
+
+		if (equipped->size() != 0 && (*equipped)[0].item.instanceData) {
+			TESObjectWEAP* weap = (TESObjectWEAP*)(*equipped)[0].item.object;
+
+			if (!weap) {
+				isRunning = false;
+				return;
+			}
+
+			if (HasKeywordVM(vm, 0, weap, WeaponTypeSniper)) {
+				float vSpeed = weap->weaponData.rangedData->boltChargeSeconds;
+				bool isBolt = vSpeed > 0.5;
+
+				if (isBolt) {
+					weaponType = WeaponType::BoltAction;  // 볼트액션일 경우
+				} else {
+					weaponType = WeaponType::Sniper;  // 볼트액션이 아니면 일반 저격총
+				}
+			}
+		}
 
 		// weaponData.enchantments가 nullptr일 경우 새로 할당하여 weaponData에 설정
 		if (!instData->enchantments) {
@@ -632,6 +631,14 @@ void RegisterEvent()
 	ui->GetSingleton()->GetEventSource<MenuOpenCloseEvent>()->RegisterSink(menuHandle);
 }
 
+void createFileIfNotExist(const std::string& filePath)
+{
+	// 파일이 존재하지 않으면 생성
+	if (!fs::exists(filePath)) {
+		std::ofstream outFile(filePath);
+	}
+}
+
 void OnF4SEMessage(F4SE::MessagingInterface::Message* msg)
 {
 	switch (msg->type) {
@@ -656,8 +663,8 @@ void OnF4SEMessage(F4SE::MessagingInterface::Message* msg)
 			Power_PopHeadGear = (TESGlobal*)DH->LookupForm(0x818, "HP_HelmetPopper.esp");
 			Power_PopHeadGear_Weapon = (TESGlobal*)DH->LookupForm(0x81a, "HP_HelmetPopper.esp");
 			Angle_PopHeadGear = (TESGlobal*)DH->LookupForm(0x81b, "HP_HelmetPopper.esp");
-			Pop_NonCollision = (TESGlobal*)DH->LookupForm(0x81c, "HP_HelmetPopper.esp");
-			Pop_Force_NonSniper = (TESGlobal*)DH->LookupForm(0x81f, "HP_HelmetPopper.esp");
+			//Pop_NonCollision = (TESGlobal*)DH->LookupForm(0x81c, "HP_HelmetPopper.esp");
+			Pop_Force_NonSniper = (TESGlobal*)DH->LookupForm(0x827, "HP_HelmetPopper.esp");
 
 			// 실행 파일 경로를 구한 후 targetDirectory에 직접 할당
 			char resultBuf[256];
@@ -667,6 +674,15 @@ void OnF4SEMessage(F4SE::MessagingInterface::Message* msg)
 			lootDir = lootDir.substr(0, lootDir.find_last_of('\\')) + "\\Data\\F4SE\\Plugins\\_skipFilter\\";
 
 			loadFilterSettingsFromFiles();  // txt 파일에 적힌 필터들을 배열에 저장함
+			
+			// 필터 파일을 확인하고 없으면 만듬
+			std::string getName = "skipFilter.txt";
+
+			// Get.txt와 Skip.txt 경로 생성
+			std::string getPath = lootDir + getName;
+
+			// 파일이 없으면 생성
+			createFileIfNotExist(getPath);
 
 			// 필터가구를 닫을때 쓸 변수들
 			filterBox = (TESObjectREFR*)DH->LookupForm(0x823, "HP_HelmetPopper.esp");
